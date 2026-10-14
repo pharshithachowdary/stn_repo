@@ -1,0 +1,57 @@
+name: stn-conjunctions
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stn}
+      POSTGRES_DB: ${POSTGRES_DB:-stn}
+    volumes:
+      - pgdata:/var/lib/postgresql/data      # persistent across `docker compose down`
+    networks: [stn_net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  api:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy           # API starts only once Postgres is accepting connections
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-stn}:${POSTGRES_PASSWORD:-stn}@db:5432/${POSTGRES_DB:-stn}
+      WORKER_ENABLED: ${WORKER_ENABLED:-true}
+      WORKER_INTERVAL_SECONDS: ${WORKER_INTERVAL_SECONDS:-30}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    networks: [stn_net]
+
+  # Opt-in:  docker compose --profile test run --rm tests
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Separate database (auto-created by the suite) so tests never touch real data.
+      TEST_DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-stn}:${POSTGRES_PASSWORD:-stn}@db:5432/stn_test
+    networks: [stn_net]
+
+networks:
+  stn_net:
+    driver: bridge
+
+volumes:
+  pgdata:
